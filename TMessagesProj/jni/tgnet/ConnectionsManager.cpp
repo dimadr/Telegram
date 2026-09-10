@@ -313,6 +313,10 @@ void ConnectionsManager::scheduleTask(std::function<void()> task) {
     wakeup();
 }
 
+void ConnectionsManager::scheduleMieruTask(std::function<void()> task) {
+    scheduleTask(std::move(task));
+}
+
 void ConnectionsManager::scheduleEvent(EventObject *eventObject, uint32_t time) {
     eventObject->time = getCurrentTimeMonotonicMillis() + time;
     std::list<EventObject *>::iterator iter;
@@ -3742,6 +3746,24 @@ void ConnectionsManager::setProxySettings(std::string address, uint16_t port, st
             }
             processRequestQueue(0, 0);
         }
+    });
+}
+
+void ConnectionsManager::setMieruProxySettings(bool value) {
+    scheduleTask([&, value] {
+        if (mieruProxy == value) {
+            return;
+        }
+        mieruProxy = value;
+        if (LOGS_ENABLED) DEBUG_D("ConnectionsManager::setMieruProxySettings value=%d", value);
+        for (auto & datacenter : datacenters) {
+            datacenter.second->suspendConnections(true);
+        }
+        Datacenter *datacenter = getDatacenterWithId(DEFAULT_DATACENTER_ID);
+        if (datacenter != nullptr && datacenter->isHandshakingAny()) {
+            datacenter->beginHandshake(HandshakeTypeCurrent, true);
+        }
+        processRequestQueue(0, 0);
     });
 }
 

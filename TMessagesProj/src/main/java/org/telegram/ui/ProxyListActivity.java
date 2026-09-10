@@ -175,7 +175,7 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
         }
 
         public void setProxy(SharedConfig.ProxyInfo proxyInfo) {
-            textView.setText(proxyInfo.address + ":" + proxyInfo.port);
+            textView.setText((proxyInfo.isMieruProxy() ? "Mieru " : "") + proxyInfo.address + ":" + (proxyInfo.isMieruProxy() ? proxyInfo.getMieruPort() : proxyInfo.port));
             currentInfo = proxyInfo;
         }
 
@@ -196,6 +196,9 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                     colorKey = Theme.key_windowBackgroundWhiteGrayText2;
                     valueTextView.setText(getString(R.string.Connecting));
                 }
+            } else if (currentInfo.isMieruProxy()) {
+                valueTextView.setText("Mieru " + currentInfo.mieruProtocol);
+                colorKey = Theme.key_windowBackgroundWhiteGrayText2;
             } else {
                 if (currentInfo.checking) {
                     valueTextView.setText(getString(R.string.Checking));
@@ -397,15 +400,17 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                 if (SharedConfig.currentProxy == null) {
                     if (!proxyList.isEmpty()) {
                         SharedConfig.currentProxy = proxyList.get(0);
-
                         if (!useProxySettings) {
-                            SharedPreferences preferences = MessagesController.getGlobalMainSettings();
                             SharedPreferences.Editor editor = MessagesController.getGlobalMainSettings().edit();
                             editor.putString("proxy_ip", SharedConfig.currentProxy.address);
                             editor.putString("proxy_pass", SharedConfig.currentProxy.password);
                             editor.putString("proxy_user", SharedConfig.currentProxy.username);
                             editor.putInt("proxy_port", SharedConfig.currentProxy.port);
                             editor.putString("proxy_secret", SharedConfig.currentProxy.secret);
+                            editor.putInt("proxy_type", SharedConfig.currentProxy.proxyType);
+                            editor.putInt("proxy_mtu", SharedConfig.currentProxy.mieruMTU);
+                            editor.putString("proxy_protocol", SharedConfig.currentProxy.mieruProtocol);
+                            editor.putString("proxy_port_spec", SharedConfig.currentProxy.getMieruPort());
                             editor.commit();
                         }
                     } else {
@@ -417,7 +422,6 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                 updateRows(true);
 
                 SharedPreferences preferences = MessagesController.getGlobalMainSettings();
-
                 TextCheckCell textCheckCell = (TextCheckCell) view;
                 textCheckCell.setChecked(useProxySettings);
                 if (!useProxySettings) {
@@ -429,11 +433,22 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                     useProxyForCalls = false;
                 }
 
-                SharedPreferences.Editor editor = MessagesController.getGlobalMainSettings().edit();
+                SharedPreferences.Editor editor = preferences.edit();
                 editor.putBoolean("proxy_enabled", useProxySettings);
                 editor.commit();
 
-                ConnectionsManager.setProxySettings(useProxySettings, SharedConfig.currentProxy.address, SharedConfig.currentProxy.port, SharedConfig.currentProxy.username, SharedConfig.currentProxy.password, SharedConfig.currentProxy.secret);
+                if (SharedConfig.currentProxy != null && SharedConfig.currentProxy.isMieruProxy()) {
+                    useProxySettings = ConnectionsManager.setMieruProxySettings(useProxySettings, SharedConfig.currentProxy.address, SharedConfig.currentProxy.getMieruPort(),
+                            SharedConfig.currentProxy.username, SharedConfig.currentProxy.password, SharedConfig.currentProxy.mieruMTU, SharedConfig.currentProxy.mieruProtocol);
+                    if (!useProxySettings) {
+                        preferences.edit().putBoolean("proxy_enabled", false).apply();
+                        textCheckCell.setChecked(false);
+                    }
+                } else if (SharedConfig.currentProxy != null) {
+                    ConnectionsManager.setProxySettings(useProxySettings, SharedConfig.currentProxy.address, SharedConfig.currentProxy.port, SharedConfig.currentProxy.username, SharedConfig.currentProxy.password, SharedConfig.currentProxy.secret);
+                } else {
+                    ConnectionsManager.setProxySettings(useProxySettings, "", 0, "", "", "");
+                }
                 NotificationCenter.getGlobalInstance().removeObserver(ProxyListActivity.this, NotificationCenter.proxySettingsChanged);
                 NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxySettingsChanged);
                 NotificationCenter.getGlobalInstance().addObserver(ProxyListActivity.this, NotificationCenter.proxySettingsChanged);
@@ -472,6 +487,10 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                 editor.putString("proxy_user", info.username);
                 editor.putInt("proxy_port", info.port);
                 editor.putString("proxy_secret", info.secret);
+                editor.putInt("proxy_type", info.proxyType);
+                editor.putInt("proxy_mtu", info.mieruMTU);
+                editor.putString("proxy_protocol", info.mieruProtocol);
+                editor.putString("proxy_port_spec", info.getMieruPort());
                 editor.putBoolean("proxy_enabled", useProxySettings);
                 if (!info.secret.isEmpty()) {
                     useProxyForCalls = false;
@@ -493,7 +512,15 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                     TextCheckCell textCheckCell = (TextCheckCell) holder.itemView;
                     textCheckCell.setChecked(true);
                 }
-                ConnectionsManager.setProxySettings(useProxySettings, SharedConfig.currentProxy.address, SharedConfig.currentProxy.port, SharedConfig.currentProxy.username, SharedConfig.currentProxy.password, SharedConfig.currentProxy.secret);
+                if (info.isMieruProxy()) {
+                    useProxySettings = ConnectionsManager.setMieruProxySettings(useProxySettings, info.address, info.getMieruPort(),
+                            info.username, info.password, info.mieruMTU, info.mieruProtocol);
+                    if (!useProxySettings) {
+                        MessagesController.getGlobalMainSettings().edit().putBoolean("proxy_enabled", false).apply();
+                    }
+                } else {
+                    ConnectionsManager.setProxySettings(useProxySettings, info.address, info.port, info.username, info.password, info.secret);
+                }
             } else if (position == proxyAddRow) {
                 presentFragment(new ProxySettingsActivity());
             } else if (position == deleteAllRow) {
@@ -722,6 +749,9 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
     private void checkProxyList() {
         for (int a = 0, count = proxyList.size(); a < count; a++) {
             final SharedConfig.ProxyInfo proxyInfo = proxyList.get(a);
+            if (proxyInfo.isMieruProxy()) {
+                continue;
+            }
             if (proxyInfo.checking || SystemClock.elapsedRealtime() - proxyInfo.availableCheckTime < 2 * 60 * 1000) {
                 continue;
             }

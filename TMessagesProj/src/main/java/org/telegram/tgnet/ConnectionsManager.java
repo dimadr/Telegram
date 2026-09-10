@@ -37,6 +37,7 @@ import org.telegram.messenger.FileUploadOperation;
 import org.telegram.messenger.KeepAliveJob;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessagesController;
+import org.telegram.messenger.MieruClient;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.PushListenerController;
 import org.telegram.messenger.SharedConfig;
@@ -633,9 +634,29 @@ public class ConnectionsManager extends BaseController {
         String proxyPassword = preferences.getString("proxy_pass", "");
         String proxySecret = preferences.getString("proxy_secret", "");
         int proxyPort = preferences.getInt("proxy_port", 1080);
+        String proxyPortSpec = preferences.getString("proxy_port_spec", String.valueOf(proxyPort));
+        int proxyType = preferences.getInt("proxy_type", SharedConfig.ProxyInfo.TYPE_SOCKS5);
+        int proxyMtu = preferences.getInt("proxy_mtu", 1400);
+        String proxyProtocol = preferences.getString("proxy_protocol", "TCP");
 
         if (preferences.getBoolean("proxy_enabled", false) && !TextUtils.isEmpty(proxyAddress)) {
-            native_setProxySettings(currentAccount, proxyAddress, proxyPort, proxyUsername, proxyPassword, proxySecret);
+            if (proxyType == SharedConfig.ProxyInfo.TYPE_MIERU) {
+                MieruClient client = MieruClient.getInstance();
+                if (!client.isRunning()) {
+                    MieruClient.ProxyConfig config = new MieruClient.ProxyConfig(proxyAddress, proxyPortSpec, proxyUsername, proxyPassword);
+                    config.mtu = proxyMtu;
+                    config.protocol = proxyProtocol;
+                    if (!client.configure(config) || !client.start()) {
+                        client.stop();
+                        preferences.edit().putBoolean("proxy_enabled", false).apply();
+                    }
+                }
+                if (client.isRunning()) {
+                    native_setMieruProxySettings(currentAccount, true);
+                }
+            } else {
+                native_setProxySettings(currentAccount, proxyAddress, proxyPort, proxyUsername, proxyPassword, proxySecret);
+            }
         }
         String installer = "";
         try {
@@ -940,6 +961,14 @@ public class ConnectionsManager extends BaseController {
     }
 
     public static void setProxySettings(boolean enabled, String address, int port, String username, String password, String secret) {
+        MieruClient.stopIfCreated();
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            native_setMieruProxySettings(a, false);
+        }
+        setNativeProxySettings(enabled, address, port, username, password, secret);
+    }
+
+    private static void setNativeProxySettings(boolean enabled, String address, int port, String username, String password, String secret) {
         if (address == null) {
             address = "";
         }
@@ -966,6 +995,37 @@ public class ConnectionsManager extends BaseController {
         }
     }
 
+    public static boolean setMieruProxySettings(boolean enabled, String address, String portSpec, String username, String password, int mtu, String protocol) {
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            native_setMieruProxySettings(a, false);
+        }
+        MieruClient.stopIfCreated();
+        if (!enabled || TextUtils.isEmpty(address)) {
+            setNativeProxySettings(false, "", 0, "", "", "");
+            return false;
+        }
+
+        // Clear any residual socks proxy before enabling Mieru
+        setNativeProxySettings(false, "", 0, "", "", "");
+
+        // Configure and start the Mieru client
+        MieruClient.ProxyConfig config = new MieruClient.ProxyConfig(address, portSpec, username, password);
+        config.mtu = mtu;
+        config.protocol = !TextUtils.isEmpty(protocol) ? protocol : "TCP";
+
+        if (MieruClient.getInstance().configure(config) && MieruClient.getInstance().start()) {
+            // Connections of all accounts are obtained through Mieru directly
+            for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                native_setMieruProxySettings(a, true);
+            }
+            return true;
+        }
+
+        // Failed to start Mieru client
+        MieruClient.getInstance().stop();
+        return false;
+    }
+
     public static native void native_switchBackend(int currentAccount, boolean restart);
     public static native int native_isTestBackend(int currentAccount);
     public static native void native_pauseNetwork(int currentAccount);
@@ -990,6 +1050,7 @@ public class ConnectionsManager extends BaseController {
     public static native void native_setUserId(int currentAccount, long id);
     public static native void native_init(int currentAccount, int version, int layer, int apiId, String deviceModel, String systemVersion, String appVersion, String langCode, String systemLangCode, String configPath, String logPath, String regId, String cFingerprint, String installer, String packageId, int timezoneOffset, long userId, boolean userPremium, boolean enablePushConnection, boolean hasNetwork, int networkType, int performanceClass);
     public static native void native_setProxySettings(int currentAccount, String address, int port, String username, String password, String secret);
+    public static native void native_setMieruProxySettings(int currentAccount, boolean enabled);
     public static native void native_setLangCode(int currentAccount, String langCode);
     public static native void native_setRegId(int currentAccount, String regId);
     public static native void native_setSystemLangCode(int currentAccount, String langCode);

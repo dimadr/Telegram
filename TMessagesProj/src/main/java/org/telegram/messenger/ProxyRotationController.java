@@ -26,6 +26,9 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
         boolean startedCheck = false;
         for (int i = 0; i < SharedConfig.proxyList.size(); i++) {
             SharedConfig.ProxyInfo proxyInfo = SharedConfig.proxyList.get(i);
+            if (proxyInfo.isMieruProxy()) {
+                continue;
+            }
             if (proxyInfo.checking || SystemClock.elapsedRealtime() - proxyInfo.availableCheckTime < 2 * 60 * 1000) {
                 continue;
             }
@@ -69,6 +72,9 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
             if (info == SharedConfig.currentProxy || info.checking || !info.available) {
                 continue;
             }
+            if (info.isMieruProxy()) {
+                continue;
+            }
 
             SharedPreferences.Editor editor = MessagesController.getGlobalMainSettings().edit();
             editor.putString("proxy_ip", info.address);
@@ -76,6 +82,10 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
             editor.putString("proxy_user", info.username);
             editor.putInt("proxy_port", info.port);
             editor.putString("proxy_secret", info.secret);
+            editor.putInt("proxy_type", info.proxyType);
+            editor.putInt("proxy_mtu", info.mieruMTU);
+            editor.putString("proxy_protocol", info.mieruProtocol);
+            editor.putString("proxy_port_spec", info.getMieruPort());
             editor.putBoolean("proxy_enabled", true);
 
             if (!info.secret.isEmpty()) {

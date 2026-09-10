@@ -18,6 +18,9 @@
 #include <openssl/rand.h>
 #include <openssl/hmac.h>
 #include <algorithm>
+#include <atomic>
+#include <mutex>
+#include <unordered_map>
 #include <utility>
 #include <openssl/bn.h>
 #include "ByteStream.h"
@@ -30,6 +33,7 @@
 #include "NativeByteBuffer.h"
 #include "BuffersStorage.h"
 #include "Connection.h"
+#include "../mieru/mieru_jni.h"
 #include <random>
 
 #ifndef EPOLLRDHUP
@@ -37,6 +41,10 @@
 #endif
 
 #define MAX_GREASE 8
+
+static std::atomic<uint64_t> nextMieruCallbackToken{1};
+static std::mutex mieruCallbackMutex;
+static std::unordered_map<uint64_t, ConnectionSocket *> mieruCallbackSockets;
 
 static BIGNUM *get_y2(BIGNUM *x, const BIGNUM *mod, BN_CTX *big_num_context) {
     // returns y^2 = x^3 + 486662 * x^2 + x
@@ -451,9 +459,21 @@ ConnectionSocket::ConnectionSocket(int32_t instance) {
     outgoingByteStream = new ByteStream();
     lastEventTime = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
     eventObject = new EventObject(this, EventObjectTypeConnection);
+    mieruCallbackToken = nextMieruCallbackToken.fetch_add(1);
+    std::lock_guard<std::mutex> lock(mieruCallbackMutex);
+    mieruCallbackSockets[mieruCallbackToken] = this;
 }
 
 ConnectionSocket::~ConnectionSocket() {
+    {
+        std::lock_guard<std::mutex> lock(mieruCallbackMutex);
+        mieruCallbackSockets.erase(mieruCallbackToken);
+    }
+    if (mieruDialing) {
+        mieruclient_cancel_dial(mieruDialId);
+        mieruDialing = false;
+        mieruDialId = 0;
+    }
     if (outgoingByteStream != nullptr) {
         delete outgoingByteStream;
         outgoingByteStream = nullptr;
@@ -484,6 +504,13 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
 
     memset(&socketAddress, 0, sizeof(sockaddr_in));
     memset(&socketAddress6, 0, sizeof(sockaddr_in6));
+
+    bool setupMieru = ConnectionsManager::getInstance(instanceNum).mieruProxy && overrideProxyAddress.empty();
+    if (setupMieru) {
+        if (LOGS_ENABLED) DEBUG_D("connection(%p) connecting via mieru to %s:%d", this, address.c_str(), port);
+        openConnectionViaMieru(address, port, networkType);
+        return;
+    }
 
     std::string *proxyAddress = &overrideProxyAddress;
     std::string *proxySecret = &overrideProxySecret;
@@ -612,6 +639,101 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
     openConnectionInternal(ipv6);
 }
 
+void ConnectionSocket::openConnectionViaMieru(std::string address, uint16_t port, int32_t networkType) {
+    currentNetworkType = networkType;
+    currentAddress = address;
+    currentPort = port;
+    waitingForHostResolve = "";
+    adjustWriteOpAfterResolve = false;
+    adjustWriteOpAfterMieru = false;
+    tlsState = 0;
+    proxyAuthState = 0;
+    socketFd = -1;
+    lastEventTime = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
+
+    mieruDialing = true;
+    mieruDialId = 0;
+    uint64_t dialId = 0;
+
+    int32_t timeoutSeconds = timeout > 0 ? (int32_t) timeout : 12;
+    int ok = mieruclient_dial(instanceNum, mieruCallbackToken, &dialId, address.c_str(), port, timeoutSeconds * 1000);
+    if (ok == 0) {
+        if (LOGS_ENABLED) DEBUG_E("connection(%p) mieru dial start failed", this);
+        mieruDialing = false;
+        closeSocket(1, -1);
+        return;
+    }
+    mieruDialId = dialId;
+    if (adjustWriteOpAfterMieru) {
+        adjustWriteOp();
+    }
+}
+
+void ConnectionSocket::onMieruConnected(uint64_t dialId, int32_t fd) {
+    if (!mieruDialing || mieruDialId != dialId) {
+        if (LOGS_ENABLED) DEBUG_E("connection(%p) stale mieru connected result (dial %llu, current %llu)", this, (unsigned long long) dialId, (unsigned long long) mieruDialId);
+        if (fd >= 0) {
+            close(fd);
+        }
+        return;
+    }
+    mieruDialing = false;
+    mieruDialId = 0;
+    adjustWriteOpAfterMieru = false;
+    socketFd = fd;
+
+    int epolFd = ConnectionsManager::getInstance(instanceNum).epolFd;
+    if (fcntl(socketFd, F_SETFL, O_NONBLOCK) == -1) {
+        if (LOGS_ENABLED) DEBUG_E("connection(%p) mieru set O_NONBLOCK failed", this);
+        closeSocket(1, -1);
+        return;
+    }
+    eventMask.events = EPOLLOUT | EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLET;
+    eventMask.data.ptr = eventObject;
+    if (epoll_ctl(epolFd, EPOLL_CTL_ADD, socketFd, &eventMask) != 0) {
+        if (LOGS_ENABLED) DEBUG_E("connection(%p) epoll_ctl adding mieru socket failed", this);
+        closeSocket(1, -1);
+        return;
+    }
+    if (!onConnectedSent) {
+        onConnected();
+        onConnectedSent = true;
+    }
+    adjustWriteOp();
+}
+
+void ConnectionSocket::dispatchMieruConnected(uint64_t token, uint64_t dialId, int32_t fd) {
+    std::lock_guard<std::mutex> lock(mieruCallbackMutex);
+    auto socket = mieruCallbackSockets.find(token);
+    if (socket == mieruCallbackSockets.end()) {
+        if (fd >= 0) {
+            close(fd);
+        }
+        return;
+    }
+    socket->second->onMieruConnected(dialId, fd);
+}
+
+void ConnectionSocket::dispatchMieruFailed(uint64_t token, uint64_t dialId, int32_t error) {
+    std::lock_guard<std::mutex> lock(mieruCallbackMutex);
+    auto socket = mieruCallbackSockets.find(token);
+    if (socket != mieruCallbackSockets.end()) {
+        socket->second->onMieruFailed(dialId, error);
+    }
+}
+
+void ConnectionSocket::onMieruFailed(uint64_t dialId, int32_t error) {
+    if (!mieruDialing || mieruDialId != dialId) {
+        if (LOGS_ENABLED) DEBUG_E("connection(%p) stale mieru failed result (dial %llu, current %llu)", this, (unsigned long long) dialId, (unsigned long long) mieruDialId);
+        return;
+    }
+    mieruDialing = false;
+    mieruDialId = 0;
+    if (socketFd == -1) {
+        closeSocket(1, error);
+    }
+}
+
 void ConnectionSocket::openConnectionInternal(bool ipv6) {
     int epolFd = ConnectionsManager::getInstance(instanceNum).epolFd;
     int yes = 1;
@@ -667,6 +789,12 @@ int32_t ConnectionSocket::checkSocketError(int32_t *error) {
 void ConnectionSocket::closeSocket(int32_t reason, int32_t error) {
     lastEventTime = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
     ConnectionsManager::getInstance(instanceNum).detachConnection(this);
+    if (mieruDialing) {
+        uint64_t dialId = mieruDialId;
+        mieruDialing = false;
+        mieruDialId = 0;
+        mieruclient_cancel_dial(dialId);
+    }
     if (socketFd >= 0) {
         epoll_ctl(ConnectionsManager::getInstance(instanceNum).epolFd, EPOLL_CTL_DEL, socketFd, nullptr);
         if (close(socketFd) != 0) {
@@ -676,6 +804,7 @@ void ConnectionSocket::closeSocket(int32_t reason, int32_t error) {
     }
     waitingForHostResolve = "";
     adjustWriteOpAfterResolve = false;
+    adjustWriteOpAfterMieru = false;
     proxyAuthState = 0;
     tlsState = 0;
     onConnectedSent = false;
@@ -1091,6 +1220,10 @@ void ConnectionSocket::adjustWriteOp() {
         adjustWriteOpAfterResolve = true;
         return;
     }
+    if (mieruDialing) {
+        adjustWriteOpAfterMieru = true;
+        return;
+    }
     eventMask.events = EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLET;
     if (proxyAuthState == 0 && (outgoingByteStream->hasData() || !onConnectedSent) || proxyAuthState == 1 || proxyAuthState == 3 || proxyAuthState == 5 || proxyAuthState == 10) {
         eventMask.events |= EPOLLOUT;
@@ -1134,7 +1267,7 @@ void ConnectionSocket::resetLastEventTime() {
 }
 
 bool ConnectionSocket::isDisconnected() {
-    return socketFd < 0;
+    return socketFd < 0 && !mieruDialing;
 }
 
 void ConnectionSocket::dropConnection() {

@@ -53,9 +53,13 @@ import java.util.Locale;
 public class SharedConfig {
     /**
      * V2: Ping and check time serialized
+     * V3: Proxy type and Mieru-specific fields
+     * V4: Mieru single-port or port-range specification
      */
     private final static int PROXY_SCHEMA_V2 = 2;
-    private final static int PROXY_CURRENT_SCHEMA_VERSION = PROXY_SCHEMA_V2;
+    private final static int PROXY_SCHEMA_V3 = 3;
+    private final static int PROXY_SCHEMA_V4 = 4;
+    private final static int PROXY_CURRENT_SCHEMA_VERSION = PROXY_SCHEMA_V4;
 
     public final static int PASSCODE_TYPE_PIN = 0,
             PASSCODE_TYPE_PASSWORD = 1;
@@ -372,11 +376,22 @@ public class SharedConfig {
 
     public static class ProxyInfo {
 
+        // Proxy types
+        public static final int TYPE_SOCKS5 = 0;
+        public static final int TYPE_MTPROTO = 1;
+        public static final int TYPE_MIERU = 2;
+
         public String address;
         public int port;
         public String username;
         public String password;
         public String secret;
+        public int proxyType; // TYPE_SOCKS5, TYPE_MTPROTO, or TYPE_MIERU
+
+        // Mieru-specific fields
+        public int mieruMTU;
+        public String mieruProtocol; // "TCP" or "UDP"
+        public String mieruPort;
 
         public long proxyCheckPingId;
         public long ping;
@@ -385,11 +400,20 @@ public class SharedConfig {
         public long availableCheckTime;
 
         public ProxyInfo(String address, int port, String username, String password, String secret) {
+            this(address, port, username, password, secret,
+                    TextUtils.isEmpty(secret) ? TYPE_SOCKS5 : TYPE_MTPROTO);
+        }
+
+        public ProxyInfo(String address, int port, String username, String password, String secret, int proxyType) {
             this.address = address;
             this.port = port;
             this.username = username;
             this.password = password;
             this.secret = secret;
+            this.proxyType = proxyType;
+            this.mieruMTU = 1400;
+            this.mieruProtocol = "TCP";
+            this.mieruPort = String.valueOf(port);
             if (this.address == null) {
                 this.address = "";
             }
@@ -404,7 +428,27 @@ public class SharedConfig {
             }
         }
 
+        /**
+         * Check if this proxy is a Mieru proxy.
+         */
+        public boolean isMieruProxy() {
+            return proxyType == TYPE_MIERU;
+        }
+
+        public String getMieruPort() {
+            return TextUtils.isEmpty(mieruPort) ? String.valueOf(port) : mieruPort;
+        }
+
         public String getLink() {
+            if (isMieruProxy()) {
+                MieruClient.ProxyConfig config = new MieruClient.ProxyConfig(
+                        address, getMieruPort(), username, password
+                );
+                config.mtu = mieruMTU;
+                config.protocol = mieruProtocol;
+                return MieruClient.createURL(config);
+            }
+
             StringBuilder url = new StringBuilder(!TextUtils.isEmpty(secret) ? "https://t.me/proxy?" : "https://t.me/socks?");
             try {
                 url.append("server=").append(URLEncoder.encode(address, "UTF-8")).append("&").append("port=").append(port);
@@ -1416,6 +1460,12 @@ public class SharedConfig {
         String proxyPassword = preferences.getString("proxy_pass", "");
         String proxySecret = preferences.getString("proxy_secret", "");
         int proxyPort = preferences.getInt("proxy_port", 1080);
+        int proxyType = preferences.contains("proxy_type")
+                ? preferences.getInt("proxy_type", ProxyInfo.TYPE_SOCKS5)
+                : (TextUtils.isEmpty(proxySecret) ? ProxyInfo.TYPE_SOCKS5 : ProxyInfo.TYPE_MTPROTO);
+        String proxyPortSpec = preferences.getString("proxy_port_spec", String.valueOf(proxyPort));
+        int proxyMtu = preferences.getInt("proxy_mtu", 1400);
+        String proxyProtocol = preferences.getString("proxy_protocol", "TCP");
 
         proxyListLoaded = true;
         proxyList.clear();
@@ -1444,7 +1494,58 @@ public class SharedConfig {
 
                         proxyList.add(0, info);
                         if (currentProxy == null && !TextUtils.isEmpty(proxyAddress)) {
-                            if (proxyAddress.equals(info.address) && proxyPort == info.port && proxyUsername.equals(info.username) && proxyPassword.equals(info.password)) {
+                            if (proxyAddress.equals(info.address) && proxyPort == info.port && proxyUsername.equals(info.username) && proxyPassword.equals(info.password) && proxyType == info.proxyType) {
+                                currentProxy = info;
+                            }
+                        }
+                    }
+                } else if (version == PROXY_SCHEMA_V3) {
+                    count = data.readInt32(false);
+
+                    for (int i = 0; i < count; i++) {
+                        ProxyInfo info = new ProxyInfo(
+                                data.readString(false),
+                                data.readInt32(false),
+                                data.readString(false),
+                                data.readString(false),
+                                data.readString(false));
+
+                        info.proxyType = data.readInt32(false);
+                        info.mieruMTU = data.readInt32(false);
+                        info.mieruProtocol = data.readString(false);
+
+                        info.ping = data.readInt64(false);
+                        info.availableCheckTime = data.readInt64(false);
+
+                        proxyList.add(0, info);
+                        if (currentProxy == null && !TextUtils.isEmpty(proxyAddress)) {
+                            if (proxyAddress.equals(info.address) && proxyPort == info.port && proxyUsername.equals(info.username) && proxyPassword.equals(info.password) && proxyType == info.proxyType && (!info.isMieruProxy() || proxyPortSpec.equals(info.getMieruPort()))) {
+                                currentProxy = info;
+                            }
+                        }
+                    }
+                } else if (version == PROXY_SCHEMA_V4) {
+                    count = data.readInt32(false);
+
+                    for (int i = 0; i < count; i++) {
+                        ProxyInfo info = new ProxyInfo(
+                                data.readString(false),
+                                data.readInt32(false),
+                                data.readString(false),
+                                data.readString(false),
+                                data.readString(false));
+
+                        info.proxyType = data.readInt32(false);
+                        info.mieruMTU = data.readInt32(false);
+                        info.mieruProtocol = data.readString(false);
+                        info.mieruPort = data.readString(false);
+
+                        info.ping = data.readInt64(false);
+                        info.availableCheckTime = data.readInt64(false);
+
+                        proxyList.add(0, info);
+                        if (currentProxy == null && !TextUtils.isEmpty(proxyAddress)) {
+                            if (proxyAddress.equals(info.address) && proxyPort == info.port && proxyUsername.equals(info.username) && proxyPassword.equals(info.password) && proxyType == info.proxyType && (!info.isMieruProxy() || proxyPortSpec.equals(info.getMieruPort()))) {
                                 currentProxy = info;
                             }
                         }
@@ -1462,7 +1563,7 @@ public class SharedConfig {
                             data.readString(false));
                     proxyList.add(0, info);
                     if (currentProxy == null && !TextUtils.isEmpty(proxyAddress)) {
-                        if (proxyAddress.equals(info.address) && proxyPort == info.port && proxyUsername.equals(info.username) && proxyPassword.equals(info.password)) {
+                        if (proxyAddress.equals(info.address) && proxyPort == info.port && proxyUsername.equals(info.username) && proxyPassword.equals(info.password) && proxyType == info.proxyType) {
                             currentProxy = info;
                         }
                     }
@@ -1471,7 +1572,12 @@ public class SharedConfig {
             data.cleanup();
         }
         if (currentProxy == null && !TextUtils.isEmpty(proxyAddress)) {
-            ProxyInfo info = currentProxy = new ProxyInfo(proxyAddress, proxyPort, proxyUsername, proxyPassword, proxySecret);
+            ProxyInfo info = currentProxy = new ProxyInfo(proxyAddress, proxyPort, proxyUsername, proxyPassword, proxySecret, proxyType);
+            if (info.isMieruProxy()) {
+                info.mieruPort = proxyPortSpec;
+                info.mieruMTU = proxyMtu;
+                info.mieruProtocol = proxyProtocol;
+            }
             proxyList.add(0, info);
         }
     }
@@ -1502,6 +1608,12 @@ public class SharedConfig {
             serializedData.writeString(info.password != null ? info.password : "");
             serializedData.writeString(info.secret != null ? info.secret : "");
 
+            // V3 fields: proxy type and Mieru-specific
+            serializedData.writeInt32(info.proxyType);
+            serializedData.writeInt32(info.mieruMTU);
+            serializedData.writeString(info.mieruProtocol != null ? info.mieruProtocol : "TCP");
+            serializedData.writeString(info.getMieruPort());
+
             serializedData.writeInt64(info.ping);
             serializedData.writeInt64(info.availableCheckTime);
         }
@@ -1515,7 +1627,7 @@ public class SharedConfig {
         int count = proxyList.size();
         for (int a = 0; a < count; a++) {
             ProxyInfo info = proxyList.get(a);
-            if (proxyInfo.address.equals(info.address) && proxyInfo.port == info.port && proxyInfo.username.equals(info.username) && proxyInfo.password.equals(info.password) && proxyInfo.secret.equals(info.secret)) {
+            if (proxyInfo.address.equals(info.address) && proxyInfo.port == info.port && proxyInfo.username.equals(info.username) && proxyInfo.password.equals(info.password) && proxyInfo.secret.equals(info.secret) && proxyInfo.proxyType == info.proxyType && (!proxyInfo.isMieruProxy() || proxyInfo.getMieruPort().equals(info.getMieruPort()) && proxyInfo.mieruMTU == info.mieruMTU && TextUtils.equals(proxyInfo.mieruProtocol, info.mieruProtocol))) {
                 return info;
             }
         }
@@ -1539,10 +1651,16 @@ public class SharedConfig {
             editor.putString("proxy_user", "");
             editor.putString("proxy_secret", "");
             editor.putInt("proxy_port", 1080);
+            editor.putInt("proxy_type", ProxyInfo.TYPE_SOCKS5);
+            editor.putInt("proxy_mtu", 1400);
+            editor.putString("proxy_protocol", "TCP");
+            editor.putString("proxy_port_spec", "1080");
             editor.putBoolean("proxy_enabled", false);
             editor.putBoolean("proxy_enabled_calls", false);
             editor.apply();
-            if (enabled) {
+            if (proxyInfo.isMieruProxy()) {
+                ConnectionsManager.setMieruProxySettings(false, "", "", "", "", 1400, "TCP");
+            } else if (enabled) {
                 ConnectionsManager.setProxySettings(false, "", 0, "", "", "");
             }
         }

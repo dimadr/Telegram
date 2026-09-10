@@ -7,6 +7,7 @@
 #include "tgnet/ConnectionSocket.h"
 #include "tgnet/FileLog.h"
 #include "tgnet/Handshake.h"
+#include "mieru/mieru_jni.h"
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <openssl/bn.h>
@@ -41,6 +42,18 @@ jmethodID jclass_ConnectionsManager_onIntegrityCheckClassic;
 jmethodID jclass_ConnectionsManager_onCaptchaCheck;
 
 bool check_utf8(const char *data, size_t len);
+
+static void mieruConnected(int32_t instanceNum, uint64_t token, uint64_t dialId, int32_t fd) {
+    ConnectionsManager::getInstance(instanceNum).scheduleMieruTask([=] {
+        ConnectionSocket::dispatchMieruConnected(token, dialId, fd);
+    });
+}
+
+static void mieruFailed(int32_t instanceNum, uint64_t token, uint64_t dialId, int32_t error) {
+    ConnectionsManager::getInstance(instanceNum).scheduleMieruTask([=] {
+        ConnectionSocket::dispatchMieruFailed(token, dialId, error);
+    });
+}
 
 jlong getFreeBuffer(JNIEnv *env, jclass c, jint length) {
     return (jlong) (intptr_t) BuffersStorage::getInstance().getFreeBuffer((uint32_t) length);
@@ -519,6 +532,11 @@ void setJava(JNIEnv *env, jclass c, jboolean useJavaByteBuffers) {
     for (int a = 0; a < MAX_ACCOUNT_COUNT; a++) {
         ConnectionsManager::getInstance(a).setDelegate(new Delegate());
     }
+    mieruclient_register_callbacks((uintptr_t) &mieruConnected, (uintptr_t) &mieruFailed);
+}
+
+void setMieruProxySettings(JNIEnv *env, jclass c, jint instanceNum, jboolean enabled) {
+    ConnectionsManager::getInstance(instanceNum).setMieruProxySettings(enabled != JNI_FALSE);
 }
 
 static const char *ConnectionsManagerClassPathName = "org/telegram/tgnet/ConnectionsManager";
@@ -537,6 +555,7 @@ static JNINativeMethod ConnectionsManagerMethods[] = {
         {"native_bindRequestToGuid", "(III)V", (void *) bindRequestToGuid},
         {"native_applyDatacenterAddress", "(IILjava/lang/String;I)V", (void *) applyDatacenterAddress},
         {"native_setProxySettings", "(ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", (void *) setProxySettings},
+        {"native_setMieruProxySettings", "(IZ)V", (void *) setMieruProxySettings},
         {"native_getConnectionState", "(I)I", (void *) getConnectionState},
         {"native_setUserId", "(IJ)V", (void *) setUserId},
         {"native_init", "(IIIILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IJZZZII)V", (void *) init},

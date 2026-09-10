@@ -69,6 +69,7 @@ public:
     void setIpStrategy(uint8_t value);
     void init(uint32_t version, int32_t layer, int32_t apiId, std::string deviceModel, std::string systemVersion, std::string appVersion, std::string langCode, std::string systemLangCode, std::string configPath, std::string logPath, std::string regId, std::string cFingerprint, std::string installerId, std::string packageId, int32_t timezoneOffset, int64_t userId, bool userPremium, bool isPaused, bool enablePushConnection, bool hasNetwork, int32_t networkType, int32_t performanceClass);
     void setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret);
+    void setMieruProxySettings(bool value);
     void setLangCode(std::string langCode);
     void setRegId(std::string regId);
     void setSystemLangCode(std::string langCode);
@@ -87,6 +88,7 @@ public:
     void receivedIntegrityCheckClassic(int32_t requestToken, std::string nonce, std::string token);
     void receivedCaptchaResult(int32_t requestTokensCount, int32_t* requestTokens, std::string token);
     void moveToDatacenter(uint32_t datacenterId);
+    void scheduleMieruTask(std::function<void()> task);
 
 private:
     static void *ThreadProc(void *data);
@@ -190,6 +192,7 @@ private:
     std::string proxyAddress = "";
     std::string proxySecret = "";
     uint16_t proxyPort = 1080;
+    bool mieruProxy = false;
     int32_t lastPingProxyId = 2000000;
     std::vector<std::unique_ptr<ProxyCheckInfo>> proxyCheckQueue;
     std::vector<std::unique_ptr<ProxyCheckInfo>> proxyActiveChecks;

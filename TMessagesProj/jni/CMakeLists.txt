@@ -92,6 +92,11 @@ add_library(tlottie STATIC IMPORTED)
 set_target_properties(tlottie PROPERTIES
         IMPORTED_LOCATION ${CMAKE_HOME_DIRECTORY}/prebuild/${ANDROID_ABI}/libtlottie.a)
 
+# mieru (prebuilt Go c-shared library)
+add_library(mieru SHARED IMPORTED)
+set_target_properties(mieru PROPERTIES
+        IMPORTED_LOCATION ${CMAKE_HOME_DIRECTORY}/prebuild/${ANDROID_ABI}/libmieru.so)
+
 #sqlite
 add_library(sqlite STATIC
         sqlite/sqlite3.c)
@@ -155,6 +160,7 @@ add_library(${NATIVE_LIB} SHARED
         genann.c
         secureid_ocr.cpp
         tde2e/bridge.cpp
+        mieru/jni_mieru.c
 )
 
 target_compile_options(${NATIVE_LIB} PUBLIC
@@ -216,6 +222,7 @@ target_link_libraries(${NATIVE_LIB}
         avutil
         ssl
         crypto
+        mieru
         jnigraphics
         log
         z
