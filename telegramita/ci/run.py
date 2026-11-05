@@ -37,7 +37,8 @@ def dependencies():
         client['client_info']['android_client_info']['package_name'] = 'org.telegramita.messenger'
     (config / 'google-services-telegramita.json').write_text(json.dumps(google))
     (ROOT / 'local.properties').write_text('sdk.dir=' + os.environ['ANDROID_HOME'] + '\n')
-    command(['sdkmanager', 'platforms;android-36', 'build-tools;36.0.0', 'ndk;27.2.12479018', 'cmake;3.22.1'])
+    sdkmanager = str(Path(os.environ['ANDROID_HOME']) / 'cmdline-tools/latest/bin/sdkmanager')
+    command([sdkmanager, 'platforms;android-36', 'build-tools;36.0.0', 'ndk;27.2.12479018', 'cmake;3.22.1'])
     command(['go', 'mod', 'download'], ROOT / 'telegramita/native/mieru-android')
     command(['go', 'mod', 'verify'], ROOT / 'telegramita/native/mieru-android')
     gradle('--version')
