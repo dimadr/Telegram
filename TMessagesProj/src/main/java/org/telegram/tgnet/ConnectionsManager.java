@@ -30,6 +30,7 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BaseController;
 import org.telegram.messenger.BuildVars;
+import org.telegram.messenger.MieruClient;
 import org.telegram.messenger.CaptchaController;
 import org.telegram.messenger.EmuDetector;
 import org.telegram.messenger.FileLoadOperation;
@@ -649,7 +650,15 @@ public class ConnectionsManager extends BaseController {
         final SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
         final ProxySettings proxySettings = ProxySettings.fromSharedPreferences(preferences);
         if (preferences.getBoolean("proxy_enabled", false) && proxySettings.isValid()) {
-            if (proxySettings.getType() == ProxySettings.Type.WEB) {
+            if (proxySettings.getType() == ProxySettings.Type.MIERU) {
+                MieruClient client = MieruClient.getInstance();
+                if (!client.isRunning() && !startMieru(proxySettings)) {
+                    preferences.edit().putBoolean("proxy_enabled", false).apply();
+                }
+                if (client.isRunning()) {
+                    native_setMieruProxySettings(currentAccount, true);
+                }
+            } else if (proxySettings.getType() == ProxySettings.Type.WEB) {
                 int localPort = WebProxyTransport.start(proxySettings.getAddress(), proxySettings.getSecret());
                 native_setProxySettings(currentAccount, "127.0.0.1", localPort != 0 ? localPort : 9, "", "",
                         proxySettings.getSecret());
@@ -751,6 +760,10 @@ public class ConnectionsManager extends BaseController {
 
     public long checkProxy(ProxySettings settings, RequestTimeDelegate requestTimeDelegate) {
         if (settings == null || !settings.isValid()) {
+            return 0;
+        }
+        if (settings.getType() == ProxySettings.Type.MIERU) {
+            requestTimeDelegate.run(-1);
             return 0;
         }
         if (settings.getType() == ProxySettings.Type.WEB) {
@@ -959,6 +972,24 @@ public class ConnectionsManager extends BaseController {
     }
 
     public static void setProxySettings(boolean enabled, ProxySettings settings) {
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            native_setMieruProxySettings(a, false);
+        }
+        MieruClient.stopIfCreated();
+        if (enabled && settings != null && settings.getType() == ProxySettings.Type.MIERU) {
+            WebProxyTransport.stop();
+            for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                native_setProxySettings(a, "", 1080, "", "", "");
+            }
+            boolean started = settings.isValid() && startMieru(settings);
+            MessagesController.getGlobalMainSettings().edit().putBoolean("proxy_enabled", started).apply();
+            if (started) {
+                for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                    native_setMieruProxySettings(a, true);
+                }
+            }
+            return;
+        }
         String address = "";
         int port = 0;
         String username = "";
@@ -998,6 +1029,20 @@ public class ConnectionsManager extends BaseController {
         }
     }
 
+    private static boolean startMieru(ProxySettings settings) {
+        MieruClient.ProxyConfig config = new MieruClient.ProxyConfig(settings.getAddress(),
+                settings.getMieruPort(), settings.getUser(), settings.getPassword());
+        config.mtu = settings.getMieruMtu();
+        config.protocol = settings.getMieruProtocol();
+        MieruClient client = MieruClient.getInstance();
+        if (client.configure(config) && client.start()) {
+            return true;
+        }
+        client.stop();
+        return false;
+    }
+
+    public static native void native_setMieruProxySettings(int currentAccount, boolean enabled);
     public static native void native_switchBackend(int currentAccount, boolean restart);
     public static native int native_isTestBackend(int currentAccount);
     public static native void native_pauseNetwork(int currentAccount);

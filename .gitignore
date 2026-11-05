@@ -1,5 +1,7 @@
 .idea/
 .gradle/
+.ci-cache/
+ci-output/
 build/
 obj/
 *.iml

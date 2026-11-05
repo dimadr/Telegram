@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="AppName">Telegramita</string>
+    <string name="AppNameBeta">Telegramita Debug</string>
+    <color name="telegramita_icon_background">#061335</color>
+</resources>

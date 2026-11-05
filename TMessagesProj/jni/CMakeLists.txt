@@ -165,6 +165,11 @@ target_compile_features(wallet_engine_jni PRIVATE cxx_std_20)
 set_target_properties(wallet_engine_jni PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(wallet_engine_jni PRIVATE wallet_engine_cpp)
 
+# mieru (prebuilt Go c-shared library)
+add_library(mieru SHARED IMPORTED)
+set_target_properties(mieru PROPERTIES
+        IMPORTED_LOCATION ${CMAKE_HOME_DIRECTORY}/prebuild/${ANDROID_ABI}/libmieru.so)
+
 #sqlite
 add_library(sqlite STATIC
         sqlite/sqlite3.c)
@@ -229,6 +234,7 @@ add_library(${NATIVE_LIB} SHARED
         secureid_ocr.cpp
         tde2e/bridge.cpp
         tests.cpp
+        mieru/jni_mieru.c
 )
 
 # Compile JNI directly into the shared library so archive extraction cannot drop its exports.
@@ -314,6 +320,7 @@ target_link_libraries(${NATIVE_LIB}
         avutil
         ssl
         crypto
+        mieru
         jnigraphics
         log
         z

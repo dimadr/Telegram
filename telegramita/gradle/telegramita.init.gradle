@@ -1,0 +1,73 @@
+import java.util.Properties
+import java.util.Locale
+
+def telegramitaPackage = "org.telegramita.messenger"
+def telegramitaAbis = ["arm64-v8a"] as Set
+def checkoutRoot = gradle.startParameter.currentDir
+def telegramitaRoot = new File(checkoutRoot, "telegramita")
+def workspaceConfigRoot = new File(checkoutRoot, "../.build-config")
+def googleServicesFile = new File(workspaceConfigRoot, "google-services-telegramita.json")
+def defaultSigningProperties = new File(checkoutRoot, "../.release-secrets/telegramita-keystore.properties")
+def signingPropertiesFile = System.getenv("TELEGRAMITA_SIGNING_PROPERTIES") != null
+        ? new File(System.getenv("TELEGRAMITA_SIGNING_PROPERTIES"))
+        : defaultSigningProperties
+def signingProperties = new Properties()
+if (signingPropertiesFile.isFile()) {
+    signingPropertiesFile.withInputStream { signingProperties.load(it) }
+}
+def releaseRequested = gradle.startParameter.taskNames.any { it.toLowerCase(Locale.ROOT).contains("release") }
+def unsignedCi = System.getenv('GITHUB_ACTIONS') == 'true' && System.getenv('TELEGRAMITA_CI_UNSIGNED') == 'true'
+
+if (releaseRequested && !unsignedCi && !signingPropertiesFile.isFile()) {
+    throw new GradleException("Telegramita release signing properties not found: ${signingPropertiesFile}")
+}
+gradle.beforeProject { project ->
+    if (project.path == ":TMessagesProj") {
+        project.pluginManager.withPlugin("com.android.library") {
+            project.androidComponents.finalizeDsl { android ->
+                android.defaultConfig.ndk.abiFilters.clear()
+                android.defaultConfig.ndk.abiFilters.addAll(telegramitaAbis)
+                android.buildTypes.getByName("release").minifyEnabled = false
+                android.buildTypes.getByName("release").shrinkResources = false
+                if (System.getenv('CCACHE_DIR') != null) {
+                    android.defaultConfig.externalNativeBuild.cmake.arguments.addAll([
+                        '-DCMAKE_C_COMPILER_LAUNCHER=ccache', '-DCMAKE_CXX_COMPILER_LAUNCHER=ccache'])
+                }
+            }
+        }
+    }
+
+    if (project.path == ":TMessagesProj_App") {
+        project.pluginManager.withPlugin("com.android.application") {
+            project.tasks.configureEach { task ->
+                if (task.name == "processAfatDebugGoogleServices" || task.name == "processAfatReleaseGoogleServices") {
+                    task.googleServicesJsonFiles.setFrom(googleServicesFile)
+                }
+            }
+
+            project.androidComponents.finalizeDsl { android ->
+                android.defaultConfig.applicationId = telegramitaPackage
+                android.buildTypes.getByName("debug").applicationIdSuffix = ".debug"
+                android.buildTypes.getByName("release").minifyEnabled = false
+                android.buildTypes.getByName("release").shrinkResources = false
+
+                def afat = android.productFlavors.getByName("afat")
+                afat.ndk.abiFilters.clear()
+                afat.ndk.abiFilters.addAll(telegramitaAbis)
+                android.sourceSets.getByName("afat").res.srcDir(new File(telegramitaRoot, "branding/res"))
+
+                if (unsignedCi) {
+                    android.buildTypes.getByName('release').signingConfig = null
+                }
+
+                if (!unsignedCi && signingPropertiesFile.isFile()) {
+                    def releaseSigning = android.signingConfigs.getByName("release")
+                    releaseSigning.storeFile = new File(signingProperties.getProperty("storeFile"))
+                    releaseSigning.storePassword = signingProperties.getProperty("storePassword")
+                    releaseSigning.keyAlias = signingProperties.getProperty("keyAlias")
+                    releaseSigning.keyPassword = signingProperties.getProperty("keyPassword")
+                }
+            }
+        }
+    }
+}

@@ -8,6 +8,7 @@ import android.util.Base64;
 import androidx.annotation.NonNull;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.MieruClient;
 
 import java.io.UnsupportedEncodingException;
 import java.net.IDN;
@@ -27,6 +28,7 @@ public final class ProxySettings {
     public enum Type {
         SOCKS5,
         MTPROTO,
+        MIERU,
         WEB
     }
 
@@ -36,10 +38,16 @@ public final class ProxySettings {
     private final @NonNull String user;
     private final @NonNull String password;
     private final @NonNull String secret;
+    private final String mieruPort;
+    private final int mieruMtu;
+    private final String mieruProtocol;
 
     private ProxySettings(Builder builder) {
         this.type = builder.type;
         this.address = builder.address;
+        this.mieruPort = builder.mieruPort.isEmpty() ? String.valueOf(builder.port) : builder.mieruPort;
+        this.mieruMtu = builder.mieruMtu;
+        this.mieruProtocol = builder.mieruProtocol;
 
         if (type == Type.WEB) {
             secret = builder.secret;
@@ -51,7 +59,7 @@ public final class ProxySettings {
             port = builder.port;
             user = "";
             password = "";
-        } else if (type == Type.SOCKS5) {
+        } else if (type == Type.SOCKS5 || type == Type.MIERU) {
             secret = "";
             port = builder.port;
             user = builder.user;
@@ -94,12 +102,22 @@ public final class ProxySettings {
         if (TextUtils.isEmpty(address)) {
             return false;
         }
+        if (type == Type.MIERU) {
+            return MieruClient.isValidPortSpec(mieruPort) && !user.isEmpty() && !password.isEmpty()
+                    && mieruMtu >= 1280 && mieruMtu <= 1500 && MieruClient.isValidProtocol(mieruProtocol);
+        }
         return type == Type.WEB
                 ? isValidWebAddress(address) && isValidWebProxySecret(secret)
                 : port > 0;
     }
 
     public String getLink() {
+        if (type == Type.MIERU) {
+            MieruClient.ProxyConfig config = new MieruClient.ProxyConfig(address, mieruPort, user, password);
+            config.mtu = mieruMtu;
+            config.protocol = mieruProtocol;
+            return MieruClient.createURL(config);
+        }
         StringBuilder url;
         switch (type) {
             case MTPROTO:
@@ -150,12 +168,17 @@ public final class ProxySettings {
                 && Objects.equals(address, that.address)
                 && Objects.equals(user, that.user)
                 && Objects.equals(password, that.password)
-                && Objects.equals(secret, that.secret);
+                && Objects.equals(secret, that.secret)
+                && (type != Type.MIERU || mieruMtu == that.mieruMtu
+                    && Objects.equals(mieruPort, that.mieruPort)
+                    && Objects.equals(mieruProtocol, that.mieruProtocol));
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(type, address, port, user, password, secret);
+        return type == Type.MIERU
+                ? Objects.hash(type, address, port, user, password, secret, mieruPort, mieruMtu, mieruProtocol)
+                : Objects.hash(type, address, port, user, password, secret);
     }
 
     public static Builder builder() {
@@ -179,6 +202,9 @@ public final class ProxySettings {
                 .setSecret(proxySecret)
                 .setPort(proxyPort)
                 .setType(proxyType)
+                .setMieruPort(preferences.getString("proxy_port_spec", String.valueOf(proxyPort)))
+                .setMieruMtu(preferences.getInt("proxy_mtu", 1400))
+                .setMieruProtocol(preferences.getString("proxy_protocol", "TCP"))
                 .build();
     }
 
@@ -186,6 +212,15 @@ public final class ProxySettings {
         editor.putInt("proxy_type", ProxySettings.typeToInt(type));
         editor.putString("proxy_ip", address);
         switch (type) {
+            case MIERU:
+                editor.putInt("proxy_port", port);
+                editor.putString("proxy_user", user);
+                editor.putString("proxy_pass", password);
+                editor.remove("proxy_secret");
+                editor.putString("proxy_port_spec", mieruPort);
+                editor.putInt("proxy_mtu", mieruMtu);
+                editor.putString("proxy_protocol", mieruProtocol);
+                break;
             case SOCKS5:
                 editor.putInt("proxy_port", port);
                 editor.remove("proxy_secret");
@@ -224,6 +259,15 @@ public final class ProxySettings {
             String scheme = uri.getScheme();
             if (scheme == null) {
                 return null;
+            }
+            if (scheme.equalsIgnoreCase("mieru") || scheme.equalsIgnoreCase("mierus")) {
+                MieruClient.ProxyConfig config = MieruClient.parseURL(uri.toString());
+                if (config == null) {
+                    return null;
+                }
+                return builder().setType(Type.MIERU).setAddress(config.serverAddress)
+                        .setMieruPort(config.portSpec).setUser(config.username).setPassword(config.password)
+                        .setMieruMtu(config.mtu).setMieruProtocol(config.protocol).build();
             }
 
             Type type;
@@ -327,6 +371,31 @@ public final class ProxySettings {
         private @NonNull String user = "";
         private @NonNull String password = "";
         private @NonNull String secret = "";
+        private String mieruPort = "";
+        private int mieruMtu = 1400;
+        private String mieruProtocol = "TCP";
+
+        public Builder setMieruPort(String value) {
+            mieruPort = value != null ? value : "";
+            if (type == Type.MIERU && !mieruPort.isEmpty()) {
+                try {
+                    port = Integer.parseInt(mieruPort.split("-", 2)[0]);
+                } catch (NumberFormatException ignored) {
+                    port = 0;
+                }
+            }
+            return this;
+        }
+
+        public Builder setMieruMtu(int value) {
+            mieruMtu = value;
+            return this;
+        }
+
+        public Builder setMieruProtocol(String value) {
+            mieruProtocol = value != null ? value : "TCP";
+            return this;
+        }
 
         private Builder() {
         }
@@ -522,6 +591,8 @@ public final class ProxySettings {
             case MTPROTO:
                 return 1;
             case WEB:
+                return 3;
+            case MIERU:
                 return 2;
         }
         return 0;
@@ -534,8 +605,14 @@ public final class ProxySettings {
             case 1:
                 return Type.MTPROTO;
             case 2:
+                return Type.MIERU;
+            case 3:
                 return Type.WEB;
         }
         return Type.SOCKS5;
     }
+
+    public String getMieruPort() { return mieruPort; }
+    public int getMieruMtu() { return mieruMtu; }
+    public String getMieruProtocol() { return mieruProtocol; }
 }

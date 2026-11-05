@@ -59,7 +59,9 @@ public class SharedConfig {
      */
     private final static int PROXY_SCHEMA_V2 = 2;
     private final static int PROXY_SCHEMA_V3 = 3;
-    private final static int PROXY_CURRENT_SCHEMA_VERSION = PROXY_SCHEMA_V3;
+    private final static int PROXY_SCHEMA_V4 = 4;
+    private final static int PROXY_SCHEMA_V5 = 5;
+    private final static int PROXY_CURRENT_SCHEMA_VERSION = PROXY_SCHEMA_V5;
 
     public final static int PASSCODE_TYPE_PIN = 0,
             PASSCODE_TYPE_PASSWORD = 1;
@@ -396,6 +398,16 @@ public class SharedConfig {
             final String secret = data.readString(false);
             builder.setSecret(secret);
 
+            // Telegramita 12.10.1 stored type/MTU/transport before the ping fields.
+            if (version == PROXY_SCHEMA_V3 || version == PROXY_SCHEMA_V4) {
+                builder.setType(ProxySettings.intToType(data.readInt32(false)))
+                        .setMieruMtu(data.readInt32(false))
+                        .setMieruProtocol(data.readString(false));
+                if (version == PROXY_SCHEMA_V4) {
+                    builder.setMieruPort(data.readString(false));
+                }
+            }
+
             final long ping, availableCheckTime;
             if (version >= PROXY_SCHEMA_V2) {
                 ping = data.readInt64(false);
@@ -404,9 +416,12 @@ public class SharedConfig {
                 ping = availableCheckTime = 0;
             }
 
-            if (version >= PROXY_SCHEMA_V3) {
-                builder.setType(ProxySettings.intToType(data.readInt32(false)));
-            } else {
+            if (version >= PROXY_SCHEMA_V5) {
+                builder.setType(ProxySettings.intToType(data.readInt32(false)))
+                        .setMieruMtu(data.readInt32(false))
+                        .setMieruProtocol(data.readString(false))
+                        .setMieruPort(data.readString(false));
+            } else if (version < PROXY_SCHEMA_V3) {
                 builder.setType(TextUtils.isEmpty(secret) ? ProxySettings.Type.SOCKS5 : ProxySettings.Type.MTPROTO);
             }
 
@@ -427,6 +442,9 @@ public class SharedConfig {
             data.writeInt64(ping);
             data.writeInt64(availableCheckTime);
             data.writeInt32(ProxySettings.typeToInt(settings.getType()));
+            data.writeInt32(settings.getMieruMtu());
+            data.writeString(settings.getMieruProtocol());
+            data.writeString(settings.getMieruPort());
         }
     }
 
@@ -1435,7 +1453,7 @@ public class SharedConfig {
             if (count == -1) { // V2 or newer
                 int version = data.readByte(false);
 
-                if (version == PROXY_SCHEMA_V2 || version == PROXY_SCHEMA_V3) {
+                if (version >= PROXY_SCHEMA_V2 && version <= PROXY_SCHEMA_V5) {
                     count = data.readInt32(false);
 
                     for (int i = 0; i < count; i++) {

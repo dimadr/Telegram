@@ -7577,7 +7577,11 @@ public class Theme {
                 for (int a = 0; a < read; a++) {
                     if (bytes[a] == '\n') {
                         int len = a - start + 1;
-                        String line = new String(bytes, start, len - 1);
+                        int lineLength = len - 1;
+                        if (lineLength > 0 && bytes[start + lineLength - 1] == '\r') {
+                            lineLength--;
+                        }
+                        String line = new String(bytes, start, lineLength);
                         if (line.startsWith("WLS=")) {
                             if (wallpaperLink != null && wallpaperLink.length > 0) {
                                 wallpaperLink[0] = line.substring(4);

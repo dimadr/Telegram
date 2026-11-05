@@ -1,0 +1,128 @@
+name: Telegramita Android ARM64 Release
+on:
+  push:
+    branches: [telegramita]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: telegramita-android-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      TELEGRAMITA_CI_UNSIGNED: 'true'
+      GRADLE_USER_HOME: ${{ github.workspace }}/.ci-cache/gradle
+      GOMODCACHE: ${{ github.workspace }}/.ci-cache/go-mod
+      GOCACHE: ${{ github.workspace }}/.ci-cache/go-build
+      CCACHE_DIR: ${{ github.workspace }}/.ci-cache/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 2G
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17.0.20'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.2'
+          cache: false
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+      - name: Restore Gradle cache
+        id: gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ci-cache/gradle/caches
+            .ci-cache/gradle/wrapper
+          key: telegramita-linux-arm64-jdk17-gradle813-${{ hashFiles('build.gradle', 'settings.gradle', 'buildSrc/**/*.kts', '**/build.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: telegramita-linux-arm64-jdk17-gradle813-
+      - name: Restore Go cache
+        id: go
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ci-cache/go-mod
+            .ci-cache/go-build
+          key: telegramita-linux-arm64-go1262-ndk272-${{ hashFiles('telegramita/native/mieru-android/go.*', 'telegramita/native/mieru-android/*.go', 'telegramita/native/mieru-android/*.c') }}
+          restore-keys: telegramita-linux-arm64-go1262-ndk272-
+      - name: Restore compiler cache
+        id: native
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/ccache
+          key: telegramita-linux-arm64-ndk272-ccache4-${{ hashFiles('TMessagesProj/jni/CMakeLists.txt', 'TMessagesProj/jni/tgnet/*.cpp', 'TMessagesProj/jni/tgnet/*.h', 'TMessagesProj/jni/mieru/*') }}
+          restore-keys: telegramita-linux-arm64-ndk272-ccache4-
+      - name: Restore Android SDK packages
+        id: sdk
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk/27.2.12479018
+            /usr/local/lib/android/sdk/cmake/3.22.1
+            /usr/local/lib/android/sdk/build-tools/36.0.0
+            /usr/local/lib/android/sdk/platforms/android-36
+          key: telegramita-linux-sdk36-bt3600-ndk27212479018-cmake3221
+      - name: Record cache results
+        env:
+          GRADLE_HIT: ${{ steps.gradle.outputs.cache-hit }}
+          GO_HIT: ${{ steps.go.outputs.cache-hit }}
+          NATIVE_HIT: ${{ steps.native.outputs.cache-hit }}
+          SDK_HIT: ${{ steps.sdk.outputs.cache-hit }}
+        run: |
+          for category in GRADLE GO NATIVE SDK; do
+            var="${category}_HIT"
+            value="${!var}"
+            case "$value" in true) state=HIT ;; false) state=PARTIAL ;; *) state=MISS ;; esac
+            echo "CACHE_${category}=$state" >> "$GITHUB_ENV"
+          done
+      - name: Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ccache
+          ccache --version
+          python3 telegramita/ci/run.py dependencies
+      - name: Mieru ARM64 bridge
+        env:
+          PHASE_CACHE: ${{ env.CACHE_GO }}
+        run: python3 telegramita/ci/run.py mieru
+      - name: Compile Java
+        env:
+          PHASE_CACHE: ${{ env.CACHE_GRADLE }}
+        run: python3 telegramita/ci/run.py java
+      - name: Tests
+        run: python3 telegramita/ci/run.py tests
+      - name: CMake and JNI
+        env:
+          PHASE_CACHE: ${{ env.CACHE_NATIVE }}
+        run: python3 telegramita/ci/run.py native
+      - name: Package unsigned Release APK
+        run: python3 telegramita/ci/run.py apk
+      - name: Verify APK
+        run: python3 telegramita/ci/run.py verify
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache --show-stats | tee ci-output/ccache-stats.txt
+      - name: Upload APK and build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: telegramita-arm64-release-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          path: |
+            ci-output/*.apk
+            ci-output/SHA256SUMS
+            ci-output/*.json
+            ci-output/*.jsonl
+            ci-output/*.log
+            ci-output/*stats.txt

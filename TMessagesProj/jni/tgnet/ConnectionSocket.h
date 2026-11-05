@@ -11,6 +11,7 @@
 
 #include <sys/epoll.h>
 #include <netinet/in.h>
+#include <stdint.h>
 #include <string>
 
 class NativeByteBuffer;
@@ -28,6 +29,11 @@ public:
     void writeBuffer(uint8_t *data, uint32_t size);
     void writeBuffer(NativeByteBuffer *buffer);
     void openConnection(std::string address, uint16_t port, std::string secret, bool ipv6, int32_t networkType);
+    void openConnectionViaMieru(std::string address, uint16_t port, int32_t networkType);
+    void onMieruConnected(uint64_t dialId, int32_t fd);
+    void onMieruFailed(uint64_t dialId, int32_t error);
+    static void dispatchMieruConnected(uint64_t token, uint64_t dialId, int32_t fd);
+    static void dispatchMieruFailed(uint64_t token, uint64_t dialId, int32_t error);
     void setTimeout(time_t timeout);
     time_t getTimeout();
     bool isDisconnected();
@@ -69,6 +75,11 @@ private:
 
     std::string waitingForHostResolve;
     bool adjustWriteOpAfterResolve;
+
+    bool mieruDialing = false;
+    uint64_t mieruDialId = 0;
+    uint64_t mieruCallbackToken = 0;
+    bool adjustWriteOpAfterMieru = false;
 
     std::string currentSecret;
     std::string currentSecretDomain;

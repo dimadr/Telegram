@@ -172,7 +172,9 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
         }
 
         public void setProxy(SharedConfig.ProxyInfo proxyInfo) {
-            textView.setText(proxyInfo.settings.getType() == ProxySettings.Type.WEB
+            textView.setText(proxyInfo.settings.getType() == ProxySettings.Type.MIERU
+                    ? "Mieru " + proxyInfo.settings.getAddress() + ":" + proxyInfo.settings.getMieruPort()
+                    : proxyInfo.settings.getType() == ProxySettings.Type.WEB
                     ? proxyInfo.settings.getAddress() + " (WEB)"
                     : proxyInfo.settings.getAddress() + ":" + proxyInfo.settings.getPort());
             currentInfo = proxyInfo;
@@ -195,6 +197,9 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                     colorKey = Theme.key_windowBackgroundWhiteGrayText2;
                     valueTextView.setText(getString(R.string.Connecting));
                 }
+            } else if (currentInfo.settings.getType() == ProxySettings.Type.MIERU) {
+                valueTextView.setText("Mieru " + currentInfo.settings.getMieruProtocol());
+                colorKey = Theme.key_windowBackgroundWhiteGrayText2;
             } else {
                 if (currentInfo.checking) {
                     valueTextView.setText(getString(R.string.Checking));
@@ -671,6 +676,9 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
     private void checkProxyList() {
         for (int a = 0, count = proxyList.size(); a < count; a++) {
             final SharedConfig.ProxyInfo proxyInfo = proxyList.get(a);
+            if (proxyInfo.settings.getType() == ProxySettings.Type.MIERU) {
+                continue;
+            }
             if (proxyInfo.checking || SystemClock.elapsedRealtime() - proxyInfo.availableCheckTime < 2 * 60 * 1000) {
                 continue;
             }
