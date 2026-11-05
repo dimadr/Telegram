@@ -1,7 +1,7 @@
 # ARM64 Release CI
 
-Base: f32ffeec763f0bdbf4bec25b52d654f77bff733d, Telegram 13.0.2 / 7175.
-Mieru 3.38.1 is rebuilt from the locked Go module and existing bridge source.
+Base: 3de37c8cfb039452be7398909461da6288babf15, Telegram 13.1.1 / 7237.
+Mieru 3.39.0 is rebuilt from the locked Go module and existing bridge source.
 Toolchain: Ubuntu 24.04, Java Temurin 17.0.20, Go 1.26.2, Gradle 8.13,
 AGP 8.13.2, Android SDK 36, build-tools 36.0.0, NDK 27.2.12479018,
 CMake 3.22.1. Ninja is bundled with that Android CMake package.

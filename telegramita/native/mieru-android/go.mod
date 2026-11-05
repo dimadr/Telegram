@@ -3,7 +3,7 @@ module github.com/dimadr/mieru-android
 go 1.20
 
 require (
-	github.com/enfein/mieru/v3 v3.38.1
+	github.com/enfein/mieru/v3 v3.39.0
 	golang.org/x/sys v0.30.0
 	google.golang.org/protobuf v1.34.2
 )

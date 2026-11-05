@@ -1,7 +1,7 @@
 name: Telegramita Android ARM64 Release
 on:
   push:
-    branches: [telegramita]
+    branches: [telegramita-13.1.1]
   workflow_dispatch:
 permissions:
   contents: read
@@ -61,7 +61,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .ci-cache/ccache
-          key: telegramita-linux-arm64-ndk272-ccache4-${{ hashFiles('TMessagesProj/jni/CMakeLists.txt', 'TMessagesProj/jni/tgnet/*.cpp', 'TMessagesProj/jni/tgnet/*.h', 'TMessagesProj/jni/mieru/*') }}
+          key: telegramita-linux-arm64-ndk272-ccache4-${{ hashFiles('TMessagesProj/build.gradle', 'TMessagesProj_App/build.gradle', 'TMessagesProj/jni/CMakeLists.txt', 'TMessagesProj/jni/tgnet/*.cpp', 'TMessagesProj/jni/tgnet/*.h', 'TMessagesProj/jni/mieru/*') }}
           restore-keys: telegramita-linux-arm64-ndk272-ccache4-
       - name: Restore Android SDK packages
         id: sdk

@@ -47,7 +47,7 @@ def mieru():
     src = ROOT / 'telegramita/native/mieru-android'
     env = os.environ
     ndk = Path(env['ANDROID_HOME']) / 'ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin'
-    env.update(CGO_ENABLED='1', GOOS='android', GOARCH='arm64', CC=str(ndk / 'aarch64-linux-android21-clang'),
+    env.update(CGO_ENABLED='1', GOOS='android', GOARCH='arm64', CC=str(ndk / 'aarch64-linux-android23-clang'),
                CGO_LDFLAGS='-Wl,-soname,libmieru.so -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384')
     output = ROOT / 'TMessagesProj/jni/prebuild/arm64-v8a/libmieru.so'
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -73,7 +73,7 @@ def verify():
     if not apk.exists():
         apk = ROOT / 'TMessagesProj_App/build/outputs/apk/afat/release/app.apk'
     data = sp.check_output([str(tools / 'aapt2'), 'dump', 'badging', str(apk)], text=True)
-    for value in ["name='org.telegramita.messenger'", "versionName='13.0.2'", "versionCode='71759'", "application-label:'Telegramita'", "native-code: 'arm64-v8a'"]:
+    for value in ["name='org.telegramita.messenger'", "versionName='13.1.1'", "versionCode='72379'", "application-label:'Telegramita'", "native-code: 'arm64-v8a'"]:
         assert value in data, value
     assert 'application-debuggable' not in data
     with zipfile.ZipFile(apk) as z:
@@ -82,7 +82,7 @@ def verify():
         for name in ['libmieru.so', 'libtmessages.49.so']:
             (OUT / name).write_bytes(z.read('lib/arm64-v8a/' + name))
     meta = sp.check_output(['go', 'version', '-m', str(OUT / 'libmieru.so')], text=True)
-    assert re.search(r'github.com/enfein/mieru/v3\s+v3\.38\.1\s+h1:UZ5zAJi0caSmaOniVy33pyY7ANxyf4PmPeLSuYZpDro=', meta)
+    assert re.search(r'github.com/enfein/mieru/v3\s+v3\.39\.0\s+h1:22WJN9i7I4FrY1cTAVp5KfKOFm4sWrXVOXhqf5fkdr8=', meta)
     elf = sdk / 'ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf'
     symbols = sp.check_output([str(elf), '--dyn-syms', '--wide', str(OUT / 'libmieru.so')], text=True)
     for name in re.findall(r'^//export (\w+)', (ROOT / 'telegramita/native/mieru-android/main.go').read_text(), re.M):
@@ -92,11 +92,11 @@ def verify():
         assert name in symbols, name
     assert 'libmieru.so' in sp.check_output([str(elf), '-d', str(OUT / 'libtmessages.49.so')], text=True)
     command([str(tools / 'zipalign'), '-c', '-P', '16', '4', str(apk)])
-    filename = 'Telegramita-13.0.2-arm64-v8a-release-unsigned.apk'
+    filename = 'Telegramita-13.1.1-arm64-v8a-release-unsigned.apk'
     shutil.copy2(apk, OUT / filename)
     sha = hashlib.sha256(apk.read_bytes()).hexdigest()
     (OUT / 'SHA256SUMS').write_text(sha + '  ' + filename + '\n')
-    report = dict(commit=os.environ.get('GITHUB_SHA'), telegram='13.0.2', versionCode=71759, mieru='3.38.1',
+    report = dict(commit=os.environ.get('GITHUB_SHA'), telegram='13.1.1', versionCode=72379, mieru='3.39.0',
                   package='org.telegramita.messenger', signed=False, bytes=apk.stat().st_size, sha256=sha,
                   jni='PASS', abi='arm64-v8a', cache={k:v for k,v in os.environ.items() if k.startswith('CACHE_')})
     (OUT / 'build-report.json').write_text(json.dumps(report, indent=2))
